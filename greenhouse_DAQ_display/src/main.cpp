@@ -13,6 +13,7 @@
 #include <U8g2_for_Adafruit_GFX.h>
 #include <EasyButton.h>
 #include "GxEPD2_boards_added.h"
+#include <LowPower.h>
 
 
 
@@ -26,21 +27,22 @@ U8G2_FOR_ADAFRUIT_GFX u8g2Fonts;
 #define LARGE_FONT u8g2_font_inr16_mn
 
 // serial debug output enabled
-bool debug = true;
+volatile bool debug = true;
+volatile bool screenRefresh = false;
 
 // memory reset pin
 #define MEM_RESET_PIN 2
 
-float temperature_in = 22.2; // deg. C
-byte humidity_in = 78; // %
+float temperature_in = -99.9; // deg. C
+byte humidity_in = -120; // %
 
-float temperature_out = -4.7; // deg. C
+float temperature_out = -99.9; // deg. C
 
-float battery_voltage = 12.357; // V
-int battery_current = -124; // mA
+float battery_voltage = -12.357; // V
+int battery_current = -9999; // mA
 
-unsigned int light_intensity = 34781; // lux
-int air_pressure = 1012; // hPa
+unsigned int light_intensity = 65535; // lux
+int air_pressure = -1012; // hPa
 
 // input data buffer
 char buff[BUFFER_SIZE];
@@ -63,7 +65,7 @@ MinMaxValues minMaxValues;
 
 void drawScreen(byte screen)
 {
-
+  screenRefresh = true;
   uint16_t bg = GxEPD_WHITE;
   uint16_t fg = GxEPD_BLACK;
   u8g2Fonts.setFontMode(1);                 // use u8g2 transparent mode (this is default)
@@ -78,7 +80,9 @@ void drawScreen(byte screen)
   do
   {
     display.fillScreen(bg);
-
+    if (screen == 0) {
+      break;
+    }
     // temperature inside
     x =  20;
     y =  15;
@@ -86,6 +90,7 @@ void drawScreen(byte screen)
     u8g2Fonts.setCursor(x, y);
     u8g2Fonts.println("teplota uvnitr");
     switch (screen) {
+
       case 1:
         u8g2Fonts.setFont(LARGE_FONT);
         u8g2Fonts.setCursor(x + 3, y + 25);
@@ -249,7 +254,7 @@ void drawScreen(byte screen)
 
   }
   while (display.nextPage());
-
+  screenRefresh = false;
   switch (screen) { // screen timeout
     case 2:
       delay(MIN_MAX_SCREEN_DELAY * 1000);
@@ -257,14 +262,16 @@ void drawScreen(byte screen)
     case 127:
       delay(3000);
       break;
-
     default:
       break;
 
   }
+  LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
 }
 
 void receiveEvent(int howMany) {
+
+
   int t_o, t_i, p_i, volt, curr, pow;
 
   unsigned int li;
@@ -274,7 +281,7 @@ void receiveEvent(int howMany) {
     buff[index] = Wire.read();
     index++;
  }
-  Serial.println(buff);
+
   sscanf(buff, "%04X%04X%02X%04X%04X%04X%04X%04X", &t_o, &t_i, &h_i, &p_i, &li, &volt, &curr, &pow);
   temperature_in = float(t_i / 10.0);
   humidity_in = h_i;
@@ -283,11 +290,47 @@ void receiveEvent(int howMany) {
   battery_current = curr;
   light_intensity = li;
   air_pressure = p_i;
+
+  if (debug) {
+    Serial.print("Temp in: ");
+    Serial.print(temperature_in, 1);
+    Serial.print(" C | ");
+
+    Serial.print("Humidity: ");
+    Serial.print(humidity_in);
+    Serial.print(" % | ");
+
+    Serial.print("Temp out: ");
+    Serial.print(temperature_out, 1);
+    Serial.print(" C | ");
+
+    Serial.print("Pressure: ");
+    Serial.print(air_pressure);
+    Serial.print(" hPa | ");
+
+    Serial.print("Light: ");
+    Serial.print(light_intensity);
+    Serial.print(" lux | ");
+
+    Serial.print("Voltage: ");
+    Serial.print(battery_voltage, 1);
+    Serial.print(" V | ");
+
+    Serial.print("Current: ");
+    Serial.print(battery_current);
+    Serial.print(" mA | ");
+
+    Serial.print("Power: ");
+    Serial.print(battery_current * battery_voltage, 0);
+    Serial.println(" mW");
+  }
+  screenRefresh = true;
 }
 
 void setup()
 {
 
+  // clock_prescale_set(clock_div_2);
 
   Serial.begin(19200);
 
@@ -302,11 +345,15 @@ void setup()
   Wire.begin(DISPLAY_ARDUINO_I2C_ADDRESS);                // join i2c bus with address #8
   Wire.onReceive(receiveEvent); // register event
 
+  drawScreen(0);
+
 }
 
 void loop()
 {
-  
-  drawScreen(1);
-
+  delay(200);
+  if (screenRefresh) {
+    screenRefresh = false;
+    drawScreen(1);
+  }
 }
