@@ -28,7 +28,9 @@ U8G2_FOR_ADAFRUIT_GFX u8g2Fonts;
 
 // serial debug output enabled
 volatile bool debug = true;
-volatile bool screenRefresh = false;
+volatile bool screenRefreshRequest = false;
+volatile bool buttonPressed = false;
+volatile byte screen_id = 0;
 
 // memory reset pin
 #define MEM_RESET_PIN 2
@@ -62,10 +64,64 @@ struct MinMaxValues {
 
 MinMaxValues minMaxValues;
 
+void resetMemory() {
+  minMaxValues.temp_in_max = temperature_in;
+  minMaxValues.temp_in_min = temperature_in;
+  minMaxValues.humidity_in_max = humidity_in;
+  minMaxValues.humidity_in_min = humidity_in;
+  minMaxValues.temp_out_max = temperature_out;
+  minMaxValues.temp_out_min = temperature_out;
+  minMaxValues.air_pressure_max = air_pressure;
+  minMaxValues.air_pressure_min = air_pressure;
+  minMaxValues.light_intensity_max = light_intensity;
+  minMaxValues.light_intensity_min = light_intensity;
 
-void drawScreen(byte screen)
+  EEPROM.put(0, minMaxValues);
+}
+
+void checkMinMaxValues() {
+  if (temperature_in > minMaxValues.temp_in_max && temperature_in < 85.0) {
+    minMaxValues.temp_in_max = temperature_in;
+  }
+  if (temperature_in < minMaxValues.temp_in_min && temperature_in > -40.0) {
+    minMaxValues.temp_in_min = temperature_in;
+  }
+  if (humidity_in > minMaxValues.humidity_in_max && humidity_in <= 100) {
+    minMaxValues.humidity_in_max = humidity_in;
+  }
+  if (humidity_in < minMaxValues.humidity_in_min && humidity_in >= 0) {
+    minMaxValues.humidity_in_min = humidity_in;
+  }
+  if (temperature_out > minMaxValues.temp_out_max && temperature_out < 85.0) {
+    minMaxValues.temp_out_max = temperature_out;
+  }
+  if (temperature_out < minMaxValues.temp_out_min && temperature_out > -40.0) {
+    minMaxValues.temp_out_min = temperature_out;
+  }
+  if (air_pressure > minMaxValues.air_pressure_max && air_pressure < 1200) {
+    minMaxValues.air_pressure_max = air_pressure;
+  }
+  if (air_pressure < minMaxValues.air_pressure_min && air_pressure > 300) {
+    minMaxValues.air_pressure_min = air_pressure;
+  }
+  if (light_intensity > minMaxValues.light_intensity_max && light_intensity < 65535) {
+    minMaxValues.light_intensity_max = light_intensity;
+  }
+  if (light_intensity < minMaxValues.light_intensity_min && light_intensity >= 0) {
+    minMaxValues.light_intensity_min = light_intensity;
+  }
+  EEPROM.put(0, minMaxValues);
+}
+
+
+void drawScreen(byte screen) /*
+0 - splash screen
+1 - actual values
+2 = min/max values
+127 - memory reset
+*/
 {
-  screenRefresh = true;
+  screenRefreshRequest = true;
   uint16_t bg = GxEPD_WHITE;
   uint16_t fg = GxEPD_BLACK;
   u8g2Fonts.setFontMode(1);                 // use u8g2 transparent mode (this is default)
@@ -81,6 +137,12 @@ void drawScreen(byte screen)
   {
     display.fillScreen(bg);
     if (screen == 0) {
+      u8g2Fonts.setFont(SMALL_FONT);
+      u8g2Fonts.setCursor(0, 200);
+      u8g2Fonts.println("METEOSTANICE");
+      u8g2Fonts.println("SKLENIK");
+      u8g2Fonts.println("2.0");
+      while (display.nextPage());
       break;
     }
     // temperature inside
@@ -254,7 +316,7 @@ void drawScreen(byte screen)
 
   }
   while (display.nextPage());
-  screenRefresh = false;
+  screenRefreshRequest = false;
   switch (screen) { // screen timeout
     case 2:
       delay(MIN_MAX_SCREEN_DELAY * 1000);
@@ -266,7 +328,7 @@ void drawScreen(byte screen)
       break;
 
   }
-  LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+
 }
 
 void receiveEvent(int howMany) {
@@ -290,6 +352,7 @@ void receiveEvent(int howMany) {
   battery_current = curr;
   light_intensity = li;
   air_pressure = p_i;
+  screen_id = 1;
 
   if (debug) {
     Serial.print("Temp in: ");
@@ -324,7 +387,13 @@ void receiveEvent(int howMany) {
     Serial.print(battery_current * battery_voltage, 0);
     Serial.println(" mW");
   }
-  screenRefresh = true;
+  checkMinMaxValues();
+  screenRefreshRequest = true;
+}
+
+void buttonISR()
+{
+  buttonPressed = true;
 }
 
 void setup()
@@ -336,6 +405,7 @@ void setup()
 
   // read EEPROM stored min/max values
   EEPROM.get(0, minMaxValues);
+  pinMode(2, INPUT_PULLUP);
   pinMode(3, OUTPUT);
   digitalWrite(3, HIGH);
 
@@ -347,13 +417,28 @@ void setup()
 
   drawScreen(0);
 
+  attachInterrupt(digitalPinToInterrupt(MEM_RESET_PIN), buttonISR, FALLING);
+
 }
 
 void loop()
 {
   delay(200);
-  if (screenRefresh) {
-    screenRefresh = false;
+
+  if (buttonPressed) {
+    drawScreen(2);
+    if (!digitalRead(MEM_RESET_PIN)) {
+      drawScreen(127);
+      resetMemory();
+    }
     drawScreen(1);
+    buttonPressed = false;
   }
+
+  if (screenRefreshRequest) {
+    screenRefreshRequest = false;
+    drawScreen(screen_id);
+  }
+
+  LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
 }
